@@ -8,12 +8,11 @@ options:
     --inner_epochs=ie           Amount of meta epochs in the inner loop [default: 10]
     --height=h                  Height of image [default: 32]
     --length=l                  Length of image [default: 32]
-    --dataset=ds                Dataset name (Mnist, Omniglot, FIGR8) [default: FIGR8]
+    --dataset=ds                Dataset name (EMGSignal) [default: EMGSignal]
     --neural_network=nn         Either ResNet or DCGAN [default: DCGAN]
     -h, --help                  Show this help message and exit
 """
 from docopt import docopt
-
 
 import torch
 import torch.optim as optim
@@ -21,8 +20,9 @@ import torch.autograd as autograd
 
 from tensorboardX import SummaryWriter
 import numpy as np
+from PIL import Image
 import os
-from environnements import MnistMetaEnv, OmniglotMetaEnv, FIGR8MetaEnv
+from environments import EMGSignalMetaEnv
 from model import ResNetDiscriminator, ResNetGenerator, DCGANGenerator, DCGANDiscriminator
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,13 +64,15 @@ class FIGR:
         self.id_string = self.get_id_string()
         self.z_shape = 100
         self.writer = SummaryWriter('Runs/' + self.id_string)
-        self.env = eval(self.dataset + 'MetaEnv(height=self.height, length=self.length)')
+        self.env = eval(self.dataset
+                        + "MetaEnv(length=self.length, output_dir='Runs/' + self.id_string)")
         self.initialize_gan()
         self.load_checkpoint()
 
     def inner_loop(self, real_batch):
         self.meta_g.train()
-        fake_batch = self.meta_g(torch.tensor(np.random.normal(size=(self.batch_size, self.z_shape)), dtype=torch.float, device=device))
+        fake_batch = self.meta_g(
+            torch.tensor(np.random.normal(size=(self.batch_size, self.z_shape)), dtype=torch.float, device=device))
         training_batch = torch.cat([real_batch, fake_batch])
 
         # Training discriminator
@@ -84,7 +86,8 @@ class FIGR:
         self.meta_d_optim.step()
 
         # Training generator
-        output = self.meta_d(self.meta_g(torch.tensor(np.random.normal(size=(self.batch_size, self.z_shape)), dtype=torch.float, device=device)))
+        output = self.meta_d(self.meta_g(
+            torch.tensor(np.random.normal(size=(self.batch_size, self.z_shape)), dtype=torch.float, device=device)))
         generator_loss = wassertein_loss(output, self.generator_targets)
 
         self.meta_g_optim.zero_grad()
@@ -108,16 +111,26 @@ class FIGR:
             discriminator_total_loss += disc_loss
             generator_total_loss += gen_loss
 
-        self.meta_g.eval()
-        with torch.no_grad():
-            img = self.meta_g(torch.tensor(np.random.normal(size=(self.batch_size * 3, self.z_shape)), dtype=torch.float, device=device))
-        img = img.detach().cpu().numpy()
-        img = np.concatenate([np.concatenate([img[i * 3 + j] for j in range(3)], axis=-2) for i in range(self.batch_size)], axis=-1)
-        img = unnormalize_data(img)
-        img = np.concatenate([training_images, img], axis=-2)
-        self.writer.add_image('Validation_generated', img, self.eps)
+        # save stats to TensorBoard
         self.writer.add_scalar('Validation_discriminator_loss', discriminator_total_loss, self.eps)
         self.writer.add_scalar('Validation_generator_loss', generator_total_loss, self.eps)
+
+        # create image
+        self.meta_g.eval()
+        with torch.no_grad():
+            img = self.meta_g(
+                torch.tensor(np.random.normal(size=(self.batch_size * 3, self.z_shape)), dtype=torch.float,
+                             device=device))
+        img = img.detach().cpu().numpy()
+        img = np.concatenate(
+            [np.concatenate([img[i * 3 + j] for j in range(3)], axis=-2) for i in range(self.batch_size)], axis=-1)
+        img = unnormalize_data(img)
+        img = np.concatenate([training_images, img], axis=-2)
+        img = img[0, :, :]  # select single channel
+        img = img * 255
+        i = Image.fromarray(img).convert('L')
+        os.mkdir('Runs/' + self.id_string + '/iter=' + str(self.eps) + '/')
+        i.save('Runs/' + self.id_string + '/iter=' + str(self.eps) + '/spectral_output.jpeg')
 
     def meta_training_loop(self):
         data, task = self.env.sample_training_task(self.batch_size)
@@ -164,7 +177,6 @@ class FIGR:
                 self.checkpoint_model()
             self.eps += 1
 
-
     def load_args(self, args):
         self.outer_learning_rate = float(args['--outer_learning_rate'])
         self.inner_learning_rate = float(args['--inner_learning_rate'])
@@ -186,34 +198,39 @@ class FIGR:
 
     def get_id_string(self):
         return '{}_{}_olr{}_ilr{}_bsize{}_ie{}_h{}_l{}'.format(self.neural_network,
-                                                                         self.dataset,
-                                                                         str(self.outer_learning_rate),
-                                                                         str(self.inner_learning_rate),
-                                                                         str(self.batch_size),
-                                                                         str(self.inner_epochs),
-                                                                         str(self.height),
-                                                                         str(self.length))
+                                                               self.dataset,
+                                                               str(self.outer_learning_rate),
+                                                               str(self.inner_learning_rate),
+                                                               str(self.batch_size),
+                                                               str(self.inner_epochs),
+                                                               str(self.height),
+                                                               str(self.length))
 
     def initialize_gan(self):
         # D and G on CPU since they never do a feed forward operation
         self.d = eval(self.neural_network + 'Discriminator(self.env.channels, self.env.height, self.env.length)')
-        self.g = eval(self.neural_network + 'Generator(self.z_shape, self.env.channels, self.env.height, self.env.length)')
-        self.meta_d = eval(self.neural_network + 'Discriminator(self.env.channels, self.env.height, self.env.length)').to(device)
-        self.meta_g = eval(self.neural_network + 'Generator(self.z_shape, self.env.channels, self.env.height, self.env.length)').to(device)
+        self.g = eval(
+            self.neural_network + 'Generator(self.z_shape, self.env.channels, self.env.height, self.env.length)')
+        self.meta_d = eval(
+            self.neural_network + 'Discriminator(self.env.channels, self.env.height, self.env.length)').to(device)
+        self.meta_g = eval(
+            self.neural_network + 'Generator(self.z_shape, self.env.channels, self.env.height, self.env.length)').to(
+            device)
         self.d_optim = optim.Adam(params=self.d.parameters(), lr=self.outer_learning_rate)
         self.g_optim = optim.Adam(params=self.g.parameters(), lr=self.outer_learning_rate)
         self.meta_d_optim = optim.SGD(params=self.meta_d.parameters(), lr=self.inner_learning_rate)
         self.meta_g_optim = optim.SGD(params=self.meta_g.parameters(), lr=self.inner_learning_rate)
 
-        self.discriminator_targets = torch.tensor([1] * self.batch_size + [-1] * self.batch_size, dtype=torch.float, device=device).view(-1, 1)
+        self.discriminator_targets = torch.tensor([1] * self.batch_size + [-1] * self.batch_size, dtype=torch.float,
+                                                  device=device).view(-1, 1)
         self.generator_targets = torch.tensor([1] * self.batch_size, dtype=torch.float, device=device).view(-1, 1)
-
 
     def checkpoint_model(self):
         checkpoint = {'discriminator': self.d.state_dict(),
                       'generator': self.g.state_dict(),
                       'episode': self.eps}
         torch.save(checkpoint, 'Runs/' + self.id_string + '/checkpoint')
+
 
 if __name__ == '__main__':
     args = docopt(__doc__)
