@@ -6,6 +6,9 @@ import csv
 import matplotlib.pyplot as plt
 import pycwt
 
+wavelet = pycwt.Morlet(6)
+dj = 1/16
+
 
 def get_multi_channel_spectral_array(raw_signals, num_of_channels, samp_freq, spectral_type, output_dir, resize=None):
     multi_channel_spectral = []
@@ -28,8 +31,8 @@ def get_multi_channel_spectral_array(raw_signals, num_of_channels, samp_freq, sp
                                          )
         elif spectral_type == "cwt":
             spectral, sj, _, _, _, _ = pycwt.cwt(ch, 1 / samp_freq,
-                                                 dj=1/16,
-                                                 wavelet=pycwt.Morlet(6)
+                                                 dj=dj,
+                                                 wavelet=wavelet
                                                  )
             np.savetxt('%s/sj_values.csv' % output_dir, sj, delimiter=',')
         else:
@@ -86,8 +89,8 @@ def reconstruct_signals(min_max_values_path, num_of_channels, samp_freq, num_cha
                 elif spectral_type == "cwt":
                     sj = np.loadtxt('%s/sj_values.csv' % min_max_values_path, delimiter=',')
                     xrec = pycwt.icwt(img_array, sj, 1 / samp_freq,
-                                      dj=1/16,
-                                      wavelet=pycwt.Morlet(6)
+                                      dj=dj,
+                                      wavelet=wavelet
                                       )
                     xrec = xrec.real
                 else:
