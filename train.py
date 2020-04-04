@@ -65,7 +65,7 @@ class FIGR:
         self.z_shape = 100
         self.writer = SummaryWriter('Runs/' + self.id_string)
         self.env = eval(self.dataset
-                        + "MetaEnv(length=self.length, output_dir='Runs/' + self.id_string)")
+                        + "MetaEnv(length=self.length,height=self.height, output_dir='Runs/' + self.id_string)")
         self.initialize_gan()
         self.load_checkpoint()
 

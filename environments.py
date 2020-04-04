@@ -16,51 +16,12 @@ from signal_utils import get_multi_channel_spectral_array
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class MnistMetaEnv:
-    def __init__(self, height=28, length=28):
-        self.channels = 1
-        self.height = height
-        self.length = length
-        self.data = datasets.MNIST(root='./data', train=True, download=True)
-        self.make_tasks()
-        self.split_validation_and_training_task()
-        self.to_tensor = transforms.ToTensor()
-        self.resize = transforms.Resize((self.height, self.length))
-        self.sample_training_task()
-
-    def sample_training_task(self, batch_size=64):
-        task = str(random.sample(self.training_task, 1)[0])
-        task_idx = random.sample(self.task_to_examples[task], batch_size)
-
-        batch = torch.tensor(np.array([self.to_tensor(self.resize(self.data[idx][0])).numpy() for idx in task_idx]),
-                             dtype=torch.float, device=device)
-        return batch, task
-
-    def sample_validation_task(self, batch_size=64):
-        task = str(random.sample(self.validation_task, 1)[0])
-        task_idx = random.sample(self.task_to_examples[task], batch_size)
-
-        batch = torch.tensor(np.array([self.to_tensor(self.resize(self.data[idx][0])).numpy() for idx in task_idx]),
-                             dtype=torch.float, device=device)
-        return batch, task
-
-    def make_tasks(self):
-        self.task_to_examples = {}
-        self.all_tasks = set(self.data.train_labels.numpy())
-        for i, digit in enumerate(self.data.train_labels.numpy()):
-            if str(digit) not in self.task_to_examples:
-                self.task_to_examples[str(digit)] = []
-            self.task_to_examples[str(digit)].append(i)
-
-    def split_validation_and_training_task(self):
-        self.validation_task = {9}
-        self.training_task = self.all_tasks - self.validation_task
-
-
 class EMGSignalMetaEnv(Dataset):
-    def __init__(self, length, output_dir):
+    def __init__(self, length, height, output_dir):
         self.channels = self.image_channels = 8
-        self.length = self.window_size = length
+        self.length = length
+        self.height = height
+        self.window_size = 20  # consider window_size = length
         self.samp_freq = 1024
         self.spectral_type = 'stft'
         self.rows = list(range(0, 20))  # TODO
@@ -70,7 +31,11 @@ class EMGSignalMetaEnv(Dataset):
 
         self.validation_set_size = 1
 
-        self.to_tensor = transforms.ToTensor()
+        self.to_tensor = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize([self.height, self.length]), # TODO: remember to revert to original size before reconstructing
+            transforms.ToTensor()
+        ])
 
         self.tasks = self.get_tasks()
         self.all_tasks = set(self.tasks)
@@ -91,20 +56,25 @@ class EMGSignalMetaEnv(Dataset):
             x = raw_data.values[r, 3:]
             multi_channel_spectral = get_multi_channel_spectral_array(x, self.channels, self.samp_freq,
                                                                       self.spectral_type, self.output_dir,
-                                                                      (128, 128))
+                                                                      (self.height, self.length))
 
             # create windows
             window_start_point = self.sample_buffer
             while (window_start_point + self.window_size) < (multi_channel_spectral.shape[1] - self.sample_buffer):
                 sample = multi_channel_spectral[:, window_start_point:window_start_point + self.window_size, :]
-                tasks[r].append(np.array(self.to_tensor(sample)))
+                t = []
+                # resize and reshape to chw format for PyTorch
+                for ch in range(sample.shape[2]):
+                    tensor = self.to_tensor(sample[..., ch])
+                    tensor = torch.squeeze(tensor, dim=0)
+                    t.append(np.array(tensor))
+
+                tasks[r].append(np.array(t))
 
                 # shift window over
                 window_start_point += self.window_shift
 
             tasks[r] = np.array(tasks[r])
-
-        self.height = multi_channel_spectral.shape[0]
 
         return tasks
 

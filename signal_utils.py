@@ -42,13 +42,14 @@ def get_multi_channel_spectral_array(raw_signals, num_of_channels, samp_freq, sp
         img_array = ((spectral.real - min_intensity) / (max_intensity - min_intensity) * 255)
 
         img = Image.fromarray(img_array).convert('L')
-        if resize is not None:  # TODO: remember to revert to original size before reconstructing
-            img = img.resize(resize)
         img_array = np.array(img)
         multi_channel_spectral.append(img_array)
 
     multi_channel_spectral = np.array(multi_channel_spectral)  # convert to np array
-    multi_channel_spectral = multi_channel_spectral.transpose((1, 2, 0))  # convert to NHWC for conformity
+    multi_channel_spectral = multi_channel_spectral.transpose((1, 2, 0))  # convert to HWC for conformity
+
+    np.savetxt('%s/hwc.csv' % output_dir,
+               np.array(multi_channel_spectral.shape), delimiter=',')  # save min/max values for signals
 
     np.savetxt('%s/min_max_values.csv' % output_dir,
                np.array(min_max_values), delimiter=',')  # save min/max values for signals
